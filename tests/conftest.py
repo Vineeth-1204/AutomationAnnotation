@@ -4,6 +4,17 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
+# ── Celery eager mode MUST be set BEFORE the FastAPI app is imported ──
+# This prevents any .delay() call from trying to connect to Redis.
+from app.celery_app import celery_app
+celery_app.conf.update(
+    task_always_eager=True,
+    task_eager_propagates=True,
+    # Disable result backend entirely in eager mode to avoid Redis connections
+    result_backend=None,
+    broker_url=None,
+)
+
 from app.main import app
 from app.core.deps import get_db
 from app.models.base import Base

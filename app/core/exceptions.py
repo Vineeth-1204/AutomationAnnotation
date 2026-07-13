@@ -31,6 +31,11 @@ class BadRequestError(AppException):
     def __init__(self, message: str = "Bad request", details: dict = None):
         super().__init__(message, status_code=400, details=details)
 
+class ValidationError(AppException):
+    def __init__(self, message: str = "Validation error", details: dict = None):
+        super().__init__(message, status_code=422, details=details)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppException)
     async def app_exception_handler(request: Request, exc: AppException):

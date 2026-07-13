@@ -20,6 +20,24 @@ from app.services.analytics import DatasetAnalyticsService
 
 logger = logging.getLogger(__name__)
 
+
+def _generate_placeholder_image(seed: str = "") -> bytes:
+    """
+    Generate a small JPEG placeholder image.
+    Used when the image file is missing on disk (e.g. in test environments).
+    This replaces the old pattern of importing from test modules.
+    """
+    img = PILImage.new("RGB", (64, 64), color=(200, 200, 200))
+    draw = ImageDraw.Draw(img)
+    val = (sum(ord(c) for c in str(seed)) * 997) if seed else 12345
+    x0 = val % 30
+    y0 = (val // 2) % 20
+    draw.rectangle([x0, y0, x0 + 20, y0 + 20], fill=(80, 80, 80))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
 class DatasetExportService:
     def __init__(self):
         self.analytics_service = DatasetAnalyticsService()
@@ -91,12 +109,13 @@ class DatasetExportService:
             
             # Pack Image Files
             for img in images:
-                if os.path.exists(img.file_path):
+                if img.file_path and os.path.exists(img.file_path):
                     zip_file.write(img.file_path, arcname=f"images/{img.filename}")
                 else:
-                    # In test environments, create mock image bytes
-                    from tests.api.test_pipeline_and_annotations import make_crisp_image_bytes
-                    zip_file.writestr(f"images/{img.filename}", make_crisp_image_bytes(img.filename))
+                    zip_file.writestr(
+                        f"images/{img.filename}",
+                        _generate_placeholder_image(img.filename)
+                    )
 
             # Pack PDF Report
             analytics_data = await self.analytics_service.get_dataset_analytics(db, dataset_id)
@@ -141,7 +160,6 @@ class DatasetExportService:
         coco_annotations = []
         coco_categories = []
 
-        # Categories
         for idx, c in enumerate(annotation_classes):
             coco_categories.append({
                 "id": idx + 1,
@@ -193,7 +211,6 @@ class DatasetExportService:
         annotation_classes: List[Dict[str, Any]],
         class_to_idx: Dict[str, int]
     ) -> None:
-        # Pack labels/*.txt
         for img in images:
             label_lines = []
             for ann in img_annotations[img.id]:
@@ -204,7 +221,6 @@ class DatasetExportService:
                 if yolo_data and len(yolo_data) == 5:
                     label_lines.append(f"{class_idx} {yolo_data[1]} {yolo_data[2]} {yolo_data[3]} {yolo_data[4]}")
                 else:
-                    # Compute YOLO coordinates from COCO bbox
                     coco_bbox = ann_data.get("coco", {}).get("bbox", [])
                     if coco_bbox and len(coco_bbox) == 4:
                         x, y, w, h = coco_bbox
@@ -217,15 +233,7 @@ class DatasetExportService:
             txt_filename = os.path.splitext(img.filename)[0] + ".txt"
             zip_file.writestr(f"labels/{txt_filename}", "\n".join(label_lines))
 
-        # Pack dataset.yaml
         names_dict = {idx: c["name"] for idx, c in enumerate(annotation_classes)}
-        yolo_yaml = {
-            "train": "./images",
-            "val": "./images",
-            "nc": len(annotation_classes),
-            "names": names_dict
-        }
-        # Yaml output
         yaml_lines = [
             "train: ./images",
             "val: ./images",
@@ -245,7 +253,6 @@ class DatasetExportService:
         class_to_idx: Dict[str, int]
     ) -> None:
         for img in images:
-            # Build XML Tree
             annotation_root = Element("annotation")
             
             filename_elem = SubElement(annotation_root, "filename")
@@ -284,7 +291,6 @@ class DatasetExportService:
                     ymax_elem = SubElement(bndbox_elem, "ymax")
                     ymax_elem.text = str(ymax)
 
-            # Pretty XML bytes
             xml_str = tostring(annotation_root, 'utf-8')
             pretty_xml = minidom.parseString(xml_str).toprettyxml(indent="    ")
             xml_filename = os.path.splitext(img.filename)[0] + ".xml"
@@ -301,25 +307,31 @@ class DatasetExportService:
         for img in images:
             anns = img_annotations[img.id]
             if anns:
-                # Assign the label of the highest confidence annotation or just the first
-                best_label = anns[0].label
+                # Pick the label with the highest confidence score
+                best_ann = max(
+                    anns,
+                    key=lambda a: (a.annotation_data or {}).get("confidence", 0.0)
+                )
+                best_label = best_ann.label
                 csv_rows.append([img.filename, best_label])
                 
-                # Write to class folder
-                if os.path.exists(img.file_path):
+                if img.file_path and os.path.exists(img.file_path):
                     zip_file.write(img.file_path, arcname=f"{best_label}/{img.filename}")
                 else:
-                    from tests.api.test_pipeline_and_annotations import make_crisp_image_bytes
-                    zip_file.writestr(f"{best_label}/{img.filename}", make_crisp_image_bytes(img.filename))
+                    zip_file.writestr(
+                        f"{best_label}/{img.filename}",
+                        _generate_placeholder_image(img.filename)
+                    )
             else:
                 csv_rows.append([img.filename, "unlabeled"])
-                if os.path.exists(img.file_path):
+                if img.file_path and os.path.exists(img.file_path):
                     zip_file.write(img.file_path, arcname=f"unlabeled/{img.filename}")
                 else:
-                    from tests.api.test_pipeline_and_annotations import make_crisp_image_bytes
-                    zip_file.writestr(f"unlabeled/{img.filename}", make_crisp_image_bytes(img.filename))
+                    zip_file.writestr(
+                        f"unlabeled/{img.filename}",
+                        _generate_placeholder_image(img.filename)
+                    )
 
-        # Write labels.csv
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer)
         writer.writerows(csv_rows)
@@ -333,7 +345,6 @@ class DatasetExportService:
         class_to_idx: Dict[str, int]
     ) -> None:
         for img in images:
-            # Create L grayscale mask
             mask = PILImage.new("L", (img.width, img.height), 0)
             draw = ImageDraw.Draw(mask)
 
@@ -345,7 +356,6 @@ class DatasetExportService:
 
                 for poly in segmentations:
                     if len(poly) >= 6:
-                        # Pillow expects coordinate list: [x1, y1, x2, y2, ...]
                         draw.polygon(poly, fill=class_idx + 1)
 
             mask_buffer = io.BytesIO()

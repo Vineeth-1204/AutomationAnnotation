@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     IMAGE_BLUR_THRESHOLD: float = 10.0
     IMAGE_NORMALIZED_RESOLUTION: int = 512
 
+    # Celery / Redis
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Export — temporary directory for packaged ZIP files
+    EXPORT_TEMP_DIR: str = "/tmp/clanker_exports"
+
+
     @property
     def async_database_uri(self) -> str:
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
